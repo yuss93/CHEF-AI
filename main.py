@@ -1,116 +1,101 @@
 import base64
 import json
+import logging
 import os
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
-import vertexai
-from vertexai.generative_models import GenerativeModel, GenerationConfig
-from vertexai.preview.vision_models import ImageGenerationModel
 
-# --- CLOUD RUN AUTH BYPASS ---
-# This ensures the "Robot Key" is used even when deployed
-GOOGLE_CREDS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-if GOOGLE_CREDS and os.path.exists(GOOGLE_CREDS):
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_CREDS
-app = FastAPI()
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from google import genai
+from google.genai import types
+from pydantic import BaseModel, Field
 
-# --- CONFIGURATION ---
-PROJECT_ID = os.getenv("PROJECT_ID", "your-default-project")
-LOCATION = os.getenv("LOCATION", "us-central1")
-EMPL_ID_LASTNAME = os.getenv("EMPL_ID_LASTNAME", "PRIVATE")
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("chefai")
 
-# Initialize Vertex AI
-vertexai.init(project=PROJECT_ID, location=LOCATION)
+PROJECT_ID = os.getenv("PROJECT_ID")
+LOCATION = os.getenv("LOCATION", "global")
+TEXT_MODEL = os.getenv("TEXT_MODEL", "gemini-3.5-flash")
+IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gemini-3.1-flash-image")
+
+client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+app = FastAPI(title="ChefAI")
+
 
 class RecipeRequest(BaseModel):
-    description: str
-    max_time: int
+    description: str = Field(min_length=1, max_length=200)
+    max_time: int = Field(ge=5, le=180)
 
-def generate_recipe_text(description, max_time):
-    # Matches the 'Workhorse' model verified in your Studio
-    model = GenerativeModel("gemini-2.0-flash-001")
 
-    prompt = f"""
-    Generate a recipe for {description}.
-    IMPORTANT: The total time (prep + cook) MUST NOT exceed {max_time} minutes.
-    Return ONLY a JSON object with this exact structure:
-    {{
-        "name": "string",
-        "prep_time": 0,
-        "cook_time": 0,
-        "total_time": 0,
-        "ingredients": [ {{"Part Name": ["item 1", "item 2"]}} ],
-        "instructions": [ {{"Part Name": ["step 1", "step 2"]}} ]
-    }}
-    Note: prep_time, cook_time, and total_time must be integers (minutes).
-    """
-    
-    response = model.generate_content(
-        prompt,
-        generation_config=GenerationConfig(
-            response_mime_type="application/json",
-            temperature=0.7
-        )
+class Section(BaseModel):
+    title: str
+    items: list[str]
+
+
+class Recipe(BaseModel):
+    name: str
+    prep_time: int
+    cook_time: int
+    ingredients: list[Section]
+    instructions: list[Section]
+
+
+def generate_recipe_text(description: str, max_time: int) -> Recipe:
+    prompt = (
+        f"Write a recipe for: {description}.\n"
+        f"Prep time plus cook time must not exceed {max_time} minutes.\n"
+        "Group ingredients and instructions into named sections "
+        '(e.g. "Sauce", "Pasta"). Times are whole minutes.'
     )
-    return json.loads(response.text)
+    response = client.models.generate_content(
+        model=TEXT_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=Recipe,
+            temperature=0.7,
+        ),
+    )
+    return Recipe.model_validate(json.loads(response.text))
 
-def generate_recipe_image(dish_name):
-    IMAGEN_MODEL_NAME = "imagen-3.0-generate-001" 
+
+def generate_recipe_image(dish_name: str) -> str | None:
+    """Returns a base64 PNG, or None if image generation fails."""
     try:
-        model = ImageGenerationModel.from_pretrained(IMAGEN_MODEL_NAME)
-        images = model.generate_images(
-            prompt=f"A professional food photography shot of {dish_name}",
-            number_of_images=1,
+        response = client.models.generate_content(
+            model=IMAGE_MODEL,
+            contents=f"Professional food photography of {dish_name}, plated, natural light.",
+            config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
         )
-        img_bytes = images[0]._image_bytes
-        return base64.b64encode(img_bytes).decode("utf-8")
-    except Exception as e:
-        print(f"Image Generation Error: {str(e)}")
-        return "" 
+        for part in response.candidates[0].content.parts:
+            if part.inline_data and part.inline_data.data:
+                return base64.b64encode(part.inline_data.data).decode()
+    except Exception:
+        log.exception("Image generation failed")
+    return None
 
-@app.get("/id")
-def get_id():
-    return EMPL_ID_LASTNAME
 
+# Plain `def` (not async): the SDK calls are blocking, so FastAPI runs this
+# in a worker thread instead of freezing the event loop.
 @app.post("/recipe")
-async def create_recipe(req: RecipeRequest):
+def create_recipe(req: RecipeRequest):
     try:
-        # 1. Generate Recipe Text
-        recipe_data = generate_recipe_text(req.description, req.max_time)
-        
-        # --- FIX FOR "List Indices" ERROR ---
-        # If the AI returns a list like [ {...} ], take the first item
-        if isinstance(recipe_data, list):
-            recipe_data = recipe_data[0]
-        # -------------------------------------
-         # time calculation
-        prep = recipe_data.get('prep_time', 0)
-        cook = recipe_data.get('cook_time', 0)
-        recipe_data['total_time'] = int(prep) + int(cook)
-        # 2. Generate Recipe Image
-        # Use .get() to avoid crashing if a key is missing
-        dish_name = recipe_data.get('name', req.description)
-        image_b64 = generate_recipe_image(dish_name)
-        recipe_data['image'] = image_b64
-        
-        return recipe_data
-    except Exception as e:
-        print(f"SERVER ERROR: {str(e)}")
-        # This sends the error to your browser console so you can see it
-        return {"error": str(e)}
+        recipe = generate_recipe_text(req.description, req.max_time)
+    except Exception:
+        log.exception("Recipe generation failed")
+        raise HTTPException(status_code=502, detail="Couldn't generate a recipe. Try again.")
 
-@app.get("/", response_class=HTMLResponse)
-async def home():
-    try:
-        # Looking in the templates folder
-        with open("templates/index.html", "r") as f:
-            return f.read()
-    except FileNotFoundError:
-        return "Error: index.html not found in templates folder."
+    data = recipe.model_dump()
+    data["total_time"] = recipe.prep_time + recipe.cook_time
+    data["image"] = generate_recipe_image(recipe.name)
+    return data
+
+
+@app.get("/")
+def home():
+    return FileResponse("templates/index.html")
+
 
 if __name__ == "__main__":
     import uvicorn
-    # Important: host 0.0.0.0 is required for Cloud Run
-    port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))

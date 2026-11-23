@@ -1,54 +1,37 @@
-# ChefAI – AI-Powered Recipe Generator
+# ChefAI
 
-**ChefAI** is an AI-powered recipe generator built with **Python**, **FastAPI**, **Flask**, and **Vertex AI**. It dynamically generates professional recipes based on user-inputted dish descriptions and available prep/cook time.
+Describe a dish and set a time limit, and ChefAI writes a recipe that fits it, along with a generated photo of the finished dish.
 
----
+Built with FastAPI and Google's Gemini models on Vertex AI.
 
-## 🚀 Features
-- **Dynamic Recipe Generation:** Uses Generative AI to create custom recipes based on ingredients and time constraints.
-- **Dual-Framework Backend:** Utilizes **FastAPI** for high-performance API routing and **Flask** for flexible web serving.
-- **Image Integration:** Leverages Vertex AI Image Generation models to visualize the generated dishes.
-- **Time Logic:** Automatically calculates and displays prep, cook, and total times.
-- **Responsive UI:** Built with vanilla **JavaScript, HTML5, and CSS3** for a seamless experience across devices.
+## How it works
 
----
+- `POST /recipe` takes a dish description and a max time (5–180 minutes).
+- Gemini returns the recipe as JSON. The output is constrained to a schema and validated with Pydantic, so the frontend always gets the same shape back.
+- The total time is calculated on the server from prep + cook time, not taken from the model.
+- A second Gemini call generates a photo of the dish. If that call fails, the recipe still comes back without an image.
+- The frontend is plain HTML/CSS/JS. Leave the dish field empty and it picks a surprise.
 
-## 🛠 Tech Stack
-- **Languages:** Python, JavaScript, HTML, CSS
-- **Frameworks:** FastAPI, Flask
-- **AI Models:** Google Vertex AI (Gemini / Imagen)
-- **Environment:** Google Cloud Platform (GCP)
+## Tech
 
----
+Python · FastAPI · Pydantic · Google Gen AI SDK (Vertex AI) · HTML/CSS/JavaScript
 
-## 📸 Demo
-![ChefAI Demo](screenshots/chefai-demo.png)
+## Run it locally
 
----
+You need a Google Cloud project with the Vertex AI API enabled.
 
-## ⚙️ Installation & Usage
-
-### 1️⃣ Clone the repository
 ```bash
-git clone https://github.com/yuss93/chefai.git
-cd chefai
-2️⃣ Install dependencies
-bash
-Copy code
+git clone https://github.com/yuss93/CHEF-AI.git
+cd CHEF-AI
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-3️⃣ Set Environment Variables ⚠️
-(Safe placeholders; do NOT upload your actual JSON key)
 
-bash
-Copy code
-export GOOGLE_APPLICATION_CREDENTIALS="path/to/your-secure-key.json"
+gcloud auth application-default login
 export PROJECT_ID="your-gcp-project-id"
-export LOCATION="us-central1"
-export EMPL_ID_LASTNAME="PRIVATE"
-4️⃣ Run the application locally
-bash
-Copy code
-uvicorn main:app --reload --host 0.0.0.0 --port 8080
-5️⃣ Open in your browser
-Go to: http://localhost:8080 to see the app running.
 
+uvicorn main:app --reload --port 8080
+```
+
+Then open http://localhost:8080.
+
+Optional environment variables: `LOCATION` (default `global`), `TEXT_MODEL` (default `gemini-3.5-flash`), `IMAGE_MODEL` (default `gemini-3.1-flash-image`).

@@ -2,15 +2,20 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>AI Tabeekh -- Generator | Yuss Dirawi</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ChefAI | Recipe Generator</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background-color: #f4f4f9; color: #333; max-width: 800px; margin: auto; padding: 40px; }
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f4f4f9; color: #333; max-width: 800px; margin: auto; padding: 40px 16px; }
         .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
         h1 { color: #e67e22; border-bottom: 2px solid #e67e22; padding-bottom: 10px; }
-        input { padding: 12px; width: 60%; border: 1px solid #ddd; border-radius: 5px; }
+        .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        input { padding: 12px; border: 1px solid #ddd; border-radius: 5px; }
+        #dishInput { flex: 1; min-width: 200px; }
+        #timeInput { width: 80px; }
         button { padding: 12px 25px; background: #e67e22; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        button:disabled { opacity: 0.6; cursor: wait; }
         #status { margin: 20px 0; font-style: italic; color: #666; }
-        .recipe-img { width: 100%; border-radius: 10px; margin-top: 20px; display: none; }
+        .recipe-img { width: 100%; border-radius: 10px; margin-top: 20px; }
         .meta { display: flex; gap: 20px; background: #fff5eb; padding: 10px; border-radius: 5px; margin: 20px 0; }
         h3 { color: #e67e22; margin-top: 25px; }
     </style>
@@ -18,91 +23,103 @@
 <body>
     <div class="card">
         <h1>ChefAI Recipe Generator</h1>
-        <p>By YUSUF Dirawi</p>
+        <p>By Yusuf Dirawi</p>
 
-        <div class="controls">
-            <input type="text" id="dishInput" placeholder="What we cooking today?">
-            <input type="number" id="timeInput" value="30" min="5" max="120" style="width: 80px;"> mins
-            <button onclick="generate()">Suggest</button>
-        </div>
+        <form class="controls" id="form">
+            <input type="text" id="dishInput" placeholder="What are we cooking today?" maxlength="200">
+            <input type="number" id="timeInput" value="30" min="5" max="180" required> mins
+            <button type="submit" id="submitBtn">Suggest</button>
+        </form>
 
         <div id="status"></div>
 
-        <div id="recipeOutput">
+        <div id="recipeOutput" hidden>
             <h2 id="rName"></h2>
-            <div class="meta" id="rMeta" style="display:none;">
-                <span><strong>Prep:</strong> <span id="rPrep"></span></span>
-                <span><strong>Cook:</strong> <span id="rCook"></span></span>
+            <div class="meta">
+                <span><strong>Prep:</strong> <span id="rPrep"></span> mins</span>
+                <span><strong>Cook:</strong> <span id="rCook"></span> mins</span>
                 <span><strong>Total:</strong> <span id="rTotal"></span> mins</span>
             </div>
-            <img id="rImg" class="recipe-img" src="">
+            <img id="rImg" class="recipe-img" alt="" hidden>
             <div id="rIngredients"></div>
             <div id="rInstructions"></div>
         </div>
     </div>
 
     <script>
-        async function generate() {
-            let dish = document.getElementById('dishInput').value;
-            const timeLimit = document.getElementById('timeInput').value;
-            const status = document.getElementById('status');
+        const $ = (id) => document.getElementById(id);
+        const surprises = ["Chef's Surprise", "Mediterranean Feast", "Quick Mystery Pasta", "Healthy Surprise Dish"];
 
-            // NEW: If empty, pick a random theme
-            if(!dish) {
-                const surprises = ["Chef's Surprise", "Random Mediterranean Feast", "Quick Mystery Pasta", "Healthy Surprise Dish"];
-                dish = surprises[Math.floor(Math.random() * surprises.length)];
-                document.getElementById('dishInput').value = dish;
-                status.innerText = "🎲 No dish entered? Chef Yusuf is picking a surprise...";
-            } else {
-                status.innerText = "👨‍🍳 Chef is thinking and you believing... please wait ~20 seconds...";
-            }
-            
-            try {
-                const response = await fetch('/recipe', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ description: dish, max_time: parseInt(timeLimit) })
-                });
-                
-                const data = await response.json();
-                if(data.error) throw new Error(data.error);
-
-                // Fill data
-                document.getElementById('rName').innerText = data.name;
-                document.getElementById('rPrep').innerText = data.prep_time;
-                document.getElementById('rCook').innerText = data.cook_time;
-                document.getElementById('rTotal').innerText = data.total_time;
-                document.getElementById('rImg').src = "data:image/png;base64," + data.image;
-                document.getElementById('rImg').style.display = "block";
-                document.getElementById('rMeta').style.display = "flex";
-
-                // Process Ingredients
-                let ingHtml = "<h3>Ingredients</h3>";
-                data.ingredients.forEach(section => {
-                    for (let [title, items] of Object.entries(section)) {
-                        ingHtml += `<h4>${title}</h4><ul>`;
-                        items.forEach(item => ingHtml += `<li>${item}</li>`);
-                        ingHtml += `</ul>`;
-                    }
-                });
-                document.getElementById('rIngredients').innerHTML = ingHtml;
-
-                // Process Instructions
-                let insHtml = "<h3>Instructions</h3>";
-                data.instructions.forEach(section => {
-                    for (let [title, steps] of Object.entries(section)) {
-                        insHtml += `<h4>${title}</h4><ol>`;
-                        steps.forEach(step => insHtml += `<li>${step}</li>`);
-                        insHtml += `</ol>`;
-                    }
-                });
-                document.getElementById('rInstructions').innerHTML = insHtml;
-                
-                status.innerText = "Bon Appétit!";
-            } catch (err) {
-                status.innerText = "Error: " + err.message;
+        // Builds sections with textContent so model output can't inject HTML.
+        function renderSections(container, heading, sections, listTag) {
+            container.replaceChildren();
+            const h3 = document.createElement("h3");
+            h3.textContent = heading;
+            container.append(h3);
+            for (const { title, items } of sections) {
+                const h4 = document.createElement("h4");
+                h4.textContent = title;
+                const list = document.createElement(listTag);
+                for (const item of items) {
+                    const li = document.createElement("li");
+                    li.textContent = item;
+                    list.append(li);
+                }
+                container.append(h4, list);
             }
         }
+
+        $("form").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const status = $("status");
+            const btn = $("submitBtn");
+            let dish = $("dishInput").value.trim();
+
+            if (!dish) {
+                dish = surprises[Math.floor(Math.random() * surprises.length)];
+                $("dishInput").value = dish;
+                status.textContent = "🎲 No dish entered, so the chef is picking a surprise...";
+            } else {
+                status.textContent = "👨‍🍳 Cooking up your recipe... (~20 seconds)";
+            }
+
+            btn.disabled = true;
+            try {
+                const res = await fetch("/recipe", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ description: dish, max_time: Number($("timeInput").value) }),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    const msg = typeof data.detail === "string" ? data.detail : "Check your inputs and try again.";
+                    throw new Error(msg);
+                }
+
+                $("rName").textContent = data.name;
+                $("rPrep").textContent = data.prep_time;
+                $("rCook").textContent = data.cook_time;
+                $("rTotal").textContent = data.total_time;
+
+                const img = $("rImg");
+                if (data.image) {
+                    img.src = "data:image/png;base64," + data.image;
+                    img.alt = data.name;
+                    img.hidden = false;
+                } else {
+                    img.hidden = true;
+                }
+
+                renderSections($("rIngredients"), "Ingredients", data.ingredients, "ul");
+                renderSections($("rInstructions"), "Instructions", data.instructions, "ol");
+                $("recipeOutput").hidden = false;
+                status.textContent = "Bon appétit!";
+            } catch (err) {
+                status.textContent = "Error: " + err.message;
+            } finally {
+                btn.disabled = false;
+            }
+        });
     </script>
 </body>
 </html>
